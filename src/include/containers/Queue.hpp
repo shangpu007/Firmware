@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2019 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,42 +31,57 @@
  *
  ****************************************************************************/
 
-#include "px4_init.h"
+#pragma once
 
-#include <px4_config.h>
-#include <px4_defines.h>
-#include <drivers/drv_hrt.h>
-#include <lib/parameters/param.h>
-#include <px4_work_queue/wq_start.h>
-#include <systemlib/cpuload.h>
+template<class T>
+struct QueueNode {
+	T next{nullptr};
+};
 
-#include "platform/cxxinitialize.h"
-
-int px4_platform_init(void)
+template<class T>
+class Queue
 {
+public:
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
+	bool empty() const { return _head == nullptr; }
 
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
+	T front() const { return _head; }
+	T back() const { return _tail; }
 
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
+	void push(T newNode)
+	{
+		if (_head == nullptr) {
+			_head = newNode;
+		}
 
-	hrt_init();
+		if (_tail != nullptr) {
+			_tail->next = newNode;
+		}
 
-	param_init();
+		_tail = newNode;
+	}
 
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
+	T pop()
+	{
+		T ret = _head;
 
-	wq_manager_start();
+		if (!empty()) {
+			if (_head != _tail) {
+				_head = _head->next;
 
-	return PX4_OK;
-}
+			} else {
+				// only one item left
+				_head = nullptr;
+				_tail = nullptr;
+			}
+		}
+
+		return ret;
+	}
+
+protected:
+
+	T _head{nullptr};
+	T _tail{nullptr};
+
+};

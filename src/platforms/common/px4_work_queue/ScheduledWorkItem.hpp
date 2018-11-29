@@ -31,42 +31,51 @@
  *
  ****************************************************************************/
 
-#include "px4_init.h"
+#pragma once
 
-#include <px4_config.h>
-#include <px4_defines.h>
+#include "WorkItem.hpp"
+
 #include <drivers/drv_hrt.h>
-#include <lib/parameters/param.h>
-#include <px4_work_queue/wq_start.h>
-#include <systemlib/cpuload.h>
 
-#include "platform/cxxinitialize.h"
-
-int px4_platform_init(void)
+namespace px4
 {
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
+class ScheduledWorkItem : public WorkItem
+{
 
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
+public:
 
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
+	ScheduledWorkItem(const wq_config &config) : WorkItem(config) {}
+	virtual ~ScheduledWorkItem() override;
 
-	hrt_init();
+	/**
+	 * Schedule next run with a delay in microseconds.
+	 *
+	 * @param delay_us		The delay in microseconds.
+	 */
+	void ScheduleDelayed(uint32_t delay_us);
 
-	param_init();
+	/**
+	 * Schedule repeating run with optional delay.
+	 *
+	 * @param interval_us		The interval in microseconds.
+	 * @param delay_us			The delay (optional) in microseconds.
+	 */
+	void ScheduleOnInterval(uint32_t interval_us, uint32_t delay_us = 0);
 
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
+	/**
+	 * Clear any scheduled work.
+	 */
+	void ScheduleClear();
 
-	wq_manager_start();
+	virtual void Run() override = 0;
 
-	return PX4_OK;
-}
+private:
+
+	static void	schedule_trampoline(void *arg);
+
+	hrt_call	_call{};
+
+};
+
+} // namespace px4

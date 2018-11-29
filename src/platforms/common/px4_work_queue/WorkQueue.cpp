@@ -31,42 +31,92 @@
  *
  ****************************************************************************/
 
-#include "px4_init.h"
+#include "WorkQueue.hpp"
+#include "WorkItem.hpp"
 
-#include <px4_config.h>
-#include <px4_defines.h>
+#include <string.h>
+
+#include <px4_tasks.h>
+#include <px4_time.h>
 #include <drivers/drv_hrt.h>
-#include <lib/parameters/param.h>
-#include <px4_work_queue/wq_start.h>
-#include <systemlib/cpuload.h>
 
-#include "platform/cxxinitialize.h"
-
-int px4_platform_init(void)
+namespace px4
 {
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
-
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
-
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
+WorkQueue::WorkQueue(const wq_config &config) :
+	_config(config)
+{
+	// set the threads name
+#ifdef __PX4_DARWIN
+	pthread_setname_np(_config.name);
+#elif !defined(__PX4_QURT)
+	pthread_setname_np(pthread_self(), _config.name);
 #endif
 
-	hrt_init();
+#ifndef __PX4_NUTTX
+	px4_sem_init(&_qlock, 0, 1);
+#endif /* __PX4_NUTTX */
 
-	param_init();
+	px4_sem_init(&_process_lock, 0, 0);
+	px4_sem_setprotocol(&_process_lock, SEM_PRIO_NONE);
 
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
-
-	wq_manager_start();
-
-	return PX4_OK;
+	_perf_latency = perf_alloc(PC_ELAPSED, "wq_run_latency");
 }
+
+WorkQueue::~WorkQueue()
+{
+	work_lock();
+	px4_sem_destroy(&_process_lock);
+	work_unlock();
+
+#ifndef __PX4_NUTTX
+	px4_sem_destroy(&_qlock);
+#endif /* __PX4_NUTTX */
+
+	perf_free(_perf_latency);
+}
+
+void WorkQueue::Add(WorkItem *item)
+{
+	work_lock();
+	item->set_queued_time();
+	_q.push(item);
+	work_unlock();
+
+	// Wake up the worker thread
+	px4_sem_post(&_process_lock);
+}
+
+void WorkQueue::Run()
+{
+	while (!should_exit()) {
+		px4_sem_wait(&_process_lock);
+
+		// process queued work
+		work_lock();
+
+		while (!_q.empty()) {
+
+			WorkItem *work = _q.pop();
+
+			work->pre_run(); // perf monitor start
+
+			work_unlock(); // unlock work queue to run (item may requeue itself)
+			perf_set_elapsed(_perf_latency, hrt_elapsed_time(&work->queued_time()));
+			work->Run();
+			work_lock(); // re-lock
+
+			work->post_run(); // perf monitor stop
+		}
+
+		work_unlock();
+	}
+}
+
+void WorkQueue::print_status()
+{
+	PX4_INFO("WorkQueue: %s", get_name());
+	perf_print_counter(_perf_latency);
+}
+
+} // namespace px4

@@ -31,42 +31,35 @@
  *
  ****************************************************************************/
 
-#include "px4_init.h"
+#include "ScheduledWorkItem.hpp"
 
-#include <px4_config.h>
-#include <px4_defines.h>
-#include <drivers/drv_hrt.h>
-#include <lib/parameters/param.h>
-#include <px4_work_queue/wq_start.h>
-#include <systemlib/cpuload.h>
-
-#include "platform/cxxinitialize.h"
-
-int px4_platform_init(void)
+namespace px4
 {
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
-
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
-
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
-
-	hrt_init();
-
-	param_init();
-
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
-
-	wq_manager_start();
-
-	return PX4_OK;
+ScheduledWorkItem::~ScheduledWorkItem()
+{
+	ScheduleClear();
 }
+
+void ScheduledWorkItem::schedule_trampoline(void *arg)
+{
+	ScheduledWorkItem *dev = reinterpret_cast<ScheduledWorkItem *>(arg);
+	dev->ScheduleNow();
+}
+
+void ScheduledWorkItem::ScheduleDelayed(uint32_t delay_us)
+{
+	hrt_call_after(&_call, delay_us, (hrt_callout)&ScheduledWorkItem::schedule_trampoline, this);
+}
+
+void ScheduledWorkItem::ScheduleOnInterval(uint32_t interval_us, uint32_t delay_us)
+{
+	hrt_call_every(&_call, delay_us, interval_us, (hrt_callout)&ScheduledWorkItem::schedule_trampoline, this);
+}
+
+void ScheduledWorkItem::ScheduleClear()
+{
+	hrt_cancel(&_call);
+}
+
+} // namespace px4

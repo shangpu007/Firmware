@@ -31,42 +31,53 @@
  *
  ****************************************************************************/
 
-#include "px4_init.h"
+#include "wqueue_test.h"
 
-#include <px4_config.h>
-#include <px4_defines.h>
 #include <drivers/drv_hrt.h>
-#include <lib/parameters/param.h>
-#include <px4_work_queue/wq_start.h>
-#include <systemlib/cpuload.h>
+#include <px4_log.h>
+#include <px4_time.h>
 
-#include "platform/cxxinitialize.h"
+#include <unistd.h>
+#include <stdio.h>
+#include <inttypes.h>
 
-int px4_platform_init(void)
+using namespace px4;
+
+AppState WQueueTest::appState;
+
+void WQueueTest::Run()
 {
+	//PX4_INFO("iter: %d elapsed: %" PRId64 " us", _iter, hrt_elapsed_time(&_qtime));
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
+	if (_iter > 10000) {
+		appState.requestExit();
 
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
+	} else {
+		ScheduleNow();
+	}
 
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
+	_iter++;
+}
 
-	hrt_init();
+int WQueueTest::main()
+{
+	appState.setRunning(true);
 
-	param_init();
+	_iter = 0;
 
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
+	// Put work in the work queue
+	ScheduleNow();
 
-	wq_manager_start();
+	// Wait for work to finsh
+	while (!appState.exitRequested()) {
+		px4_usleep(5000);
+	}
 
-	return PX4_OK;
+	PX4_INFO("WQueueTest finished");
+
+	//print_status();
+
+	px4_sleep(2);
+
+	return 0;
 }

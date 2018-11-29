@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2019 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,42 +31,83 @@
  *
  ****************************************************************************/
 
-#include "px4_init.h"
+#pragma once
 
-#include <px4_config.h>
-#include <px4_defines.h>
-#include <drivers/drv_hrt.h>
-#include <lib/parameters/param.h>
-#include <px4_work_queue/wq_start.h>
-#include <systemlib/cpuload.h>
+#include <pthread.h>
+#include <px4_sem.h>
 
-#include "platform/cxxinitialize.h"
+#include <px4_log.h>
 
-int px4_platform_init(void)
+template<class T, size_t N>
+class BlockingQueue
 {
+public:
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
+	BlockingQueue()
+	{
+		pthread_mutex_init(&_mutex, nullptr);
+		pthread_cond_init(&_cv, nullptr);
+	}
 
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
+	~BlockingQueue()
+	{
+		pthread_mutex_destroy(&_mutex);
+		pthread_cond_destroy(&_cv);
+	}
 
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
+	bool empty() const { return _count == 0; }
+	bool full() const { return _count == N; }
 
-	hrt_init();
+	bool push(T newItem)
+	{
+		pthread_mutex_lock(&_mutex);
 
-	param_init();
+		if (full()) {
+			pthread_mutex_unlock(&_mutex);
+			return false;
+		}
 
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
+		const bool was_empty = empty();
 
-	wq_manager_start();
+		_data[_tail] = newItem;
+		_tail = (_tail + 1) % N;
+		_count++;
 
-	return PX4_OK;
-}
+		pthread_mutex_unlock(&_mutex);
+
+		if (was_empty) {
+			pthread_cond_signal(&_cv);
+		}
+
+		return true;
+	}
+
+	T pop()
+	{
+		pthread_mutex_lock(&_mutex);
+
+		if (empty()) {
+			pthread_cond_wait(&_cv, &_mutex);
+		}
+
+		T ret = _data[_head];
+		_head = (_head + 1) % N;
+		_count--;
+
+		pthread_mutex_unlock(&_mutex);
+
+		return ret;
+	}
+
+private:
+
+	pthread_mutex_t _mutex;
+	pthread_cond_t _cv;
+
+	T _data[N];
+	size_t _count{0};
+
+	size_t _head{0};
+	size_t _tail{0};
+
+};

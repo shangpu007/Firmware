@@ -31,42 +31,68 @@
  *
  ****************************************************************************/
 
-#include "px4_init.h"
+#pragma once
 
-#include <px4_config.h>
+#include "WorkQueueManager.hpp"
+
+#include <containers/List.hpp>
+#include <containers/Queue.hpp>
+#include <lib/perf/perf_counter.h>
 #include <px4_defines.h>
-#include <drivers/drv_hrt.h>
-#include <lib/parameters/param.h>
-#include <px4_work_queue/wq_start.h>
-#include <systemlib/cpuload.h>
+#include <px4_sem.h>
+#include <px4_tasks.h>
 
-#include "platform/cxxinitialize.h"
-
-int px4_platform_init(void)
+namespace px4
 {
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
+class WorkItem;
 
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
+class WorkQueue : public ListNode<WorkQueue *>
+{
 
+public:
+
+	WorkQueue(const wq_config &wq_config);
+	~WorkQueue();
+
+	const char *get_name() { return _config.name; }
+
+	void Add(WorkItem *item);
+
+	// TODO: need helpers to handle clean shutdown - remove and clear?
+	//void remove(WorkItem *item);
+	//void clear();
+
+	void Run();
+
+	void request_stop() { _should_exit = true; }
+
+	void print_status();
+
+private:
+
+	bool should_exit() const { return _should_exit; }
+
+	const wq_config &_config;
+
+#ifdef __PX4_NUTTX
+	void work_lock() { _flags = enter_critical_section(); }
+	void work_unlock() { leave_critical_section(_flags); }
+	irqstate_t _flags;
 #else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
+	void work_lock() { px4_sem_wait(&_qlock); }
+	void work_unlock() { px4_sem_post(&_qlock); }
+	px4_sem_t _qlock;
 #endif
 
-	hrt_init();
+	px4_sem_t _process_lock;
 
-	param_init();
+	Queue<WorkItem *>	_q;
 
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
+	perf_counter_t	_perf_latency;
 
-	wq_manager_start();
+	bool	_should_exit{false};
 
-	return PX4_OK;
-}
+};
+
+} // namespace px4

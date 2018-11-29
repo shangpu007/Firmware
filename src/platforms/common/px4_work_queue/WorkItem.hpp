@@ -31,42 +31,64 @@
  *
  ****************************************************************************/
 
-#include "px4_init.h"
+#pragma once
 
-#include <px4_config.h>
+
+#include "WorkQueueManager.hpp"
+
+#include <containers/List.hpp>
+#include <containers/Queue.hpp>
+#include <lib/perf/perf_counter.h>
 #include <px4_defines.h>
 #include <drivers/drv_hrt.h>
-#include <lib/parameters/param.h>
-#include <px4_work_queue/wq_start.h>
-#include <systemlib/cpuload.h>
 
-#include "platform/cxxinitialize.h"
+#define WQ_ITEM_PERF 0
 
-int px4_platform_init(void)
+namespace px4
 {
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
+class WorkQueue; // forward declaration
+struct wq_config;
 
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
+class WorkItem : public ListNode<WorkItem *>, public QueueNode<WorkItem *>
+{
 
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
+public:
 
-	hrt_init();
+	WorkItem(const wq_config &config);
+	virtual ~WorkItem();
 
-	param_init();
+	bool Init(const wq_config &config);
 
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
+	void ScheduleNow();
 
-	wq_manager_start();
+	virtual void Run() = 0;
 
-	return PX4_OK;
-}
+	void pre_run();
+	void post_run();
+
+#if WQ_ITEM_PERF
+	void print_status() const;
+#endif /* WQ_ITEM_PERF */
+
+	void set_queued_time() { _qtime = hrt_absolute_time(); }
+	const uint64_t &queued_time() { return _qtime; }
+
+protected:
+
+	uint64_t	_qtime{0};       // time work was queued
+
+private:
+
+	WorkQueue	*_wq{nullptr};
+
+	volatile bool	_queued{false};	// only allow a single item to be queued at a time
+
+#if WQ_ITEM_PERF
+	perf_counter_t	_perf_cycle_time;
+	perf_counter_t	_perf_interval;
+	perf_counter_t	_perf_latency;
+#endif /* WQ_ITEM_PERF */
+};
+
+} // namespace px4

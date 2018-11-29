@@ -31,42 +31,84 @@
  *
  ****************************************************************************/
 
-#include "px4_init.h"
+#include "WorkItem.hpp"
 
-#include <px4_config.h>
-#include <px4_defines.h>
+#include "WorkQueue.hpp"
+#include "WorkQueueManager.hpp"
+
+#include <px4_log.h>
 #include <drivers/drv_hrt.h>
-#include <lib/parameters/param.h>
-#include <px4_work_queue/wq_start.h>
-#include <systemlib/cpuload.h>
 
-#include "platform/cxxinitialize.h"
-
-int px4_platform_init(void)
+namespace px4
 {
 
-#if defined(CONFIG_HAVE_CXX) && defined(CONFIG_HAVE_CXXINITIALIZE)
-	/* run C++ ctors before we go any further */
-	up_cxxinitialize();
+WorkItem::WorkItem(const wq_config &config)
+{
+#if WQ_ITEM_PERF
+	_perf_cycle_time = perf_alloc(PC_ELAPSED, "wq_cycle_run_time");
+	_perf_latency = perf_alloc(PC_ELAPSED, "wq_run_latency");
+	_perf_interval = perf_alloc(PC_INTERVAL, "wq_run_interval");
+#endif /* WQ_ITEM_PERF */
 
-#	if defined(CONFIG_EXAMPLES_NSH_CXXINITIALIZE)
-#  		error CONFIG_EXAMPLES_NSH_CXXINITIALIZE Must not be defined! Use CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE.
-#	endif
-
-#else
-#  error platform is dependent on c++ both CONFIG_HAVE_CXX and CONFIG_HAVE_CXXINITIALIZE must be defined.
-#endif
-
-	hrt_init();
-
-	param_init();
-
-	/* configure CPU load estimation */
-#ifdef CONFIG_SCHED_INSTRUMENTATION
-	cpuload_initialize_once();
-#endif
-
-	wq_manager_start();
-
-	return PX4_OK;
+	if (!Init(config)) {
+		PX4_ERR("init fail");
+	}
 }
+
+WorkItem::~WorkItem()
+{
+#if WQ_ITEM_PERF
+	perf_free(_perf_cycle_time);
+	perf_free(_perf_latency);
+	perf_free(_perf_interval);
+#endif /* WQ_ITEM_PERF */
+}
+
+bool WorkItem::Init(const wq_config &config)
+{
+	px4::WorkQueue *wq = work_queue_create(config);
+
+	if (wq != nullptr) {
+		_wq = wq;
+
+		return true;
+	}
+
+	return false;
+}
+
+void WorkItem::ScheduleNow()
+{
+	if (_wq != nullptr && !_queued) {
+		_queued = true;
+		_wq->Add(this);
+	}
+};
+
+void WorkItem::pre_run()
+{
+	_queued = false;
+#if WQ_ITEM_PERF
+	perf_set_elapsed(_perf_latency, hrt_elapsed_time(&_qtime));
+	perf_count(_perf_interval);
+	perf_begin(_perf_cycle_time);
+#endif /* WQ_ITEM_PERF */
+}
+
+void WorkItem::post_run()
+{
+#if WQ_ITEM_PERF
+	perf_end(_perf_cycle_time);
+#endif /* WQ_ITEM_PERF */
+}
+
+#if WQ_ITEM_PERF
+void WorkItem::print_status() const
+{
+	perf_print_counter(_perf_cycle_time);
+	perf_print_counter(_perf_interval);
+	perf_print_counter(_perf_latency);
+}
+#endif /* WQ_ITEM_PERF */
+
+} // namespace px4

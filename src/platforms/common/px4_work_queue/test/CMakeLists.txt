@@ -1,6 +1,6 @@
 ############################################################################
 #
-#   Copyright (c) 2015 PX4 Development Team. All rights reserved.
+#   Copyright (c) 2019 PX4 Development Team. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,32 +31,14 @@
 #
 ############################################################################
 
-list(APPEND CMAKE_MODULE_PATH "${PX4_SOURCE_DIR}/boards/atlflight/cmake_hexagon")
-include(hexagon_sdk)
-
-include_directories(${HEXAGON_8074_INCLUDES})
-
-set(QURT_LAYER_SRCS
-	px4_qurt_impl.cpp
-	px4_qurt_tasks.cpp
-	lib_crc32.c
-	../../../posix/src/px4_layer/drv_hrt.cpp
-	qurt_stubs.c
-	main.cpp
-	shmem_qurt.cpp
-	px4_init.cpp
+px4_add_module(
+	MODULE lib__work_queue__test__wqueue_test
+	MAIN wqueue_test
+	SRCS
+		wqueue_main.cpp
+		wqueue_scheduled_test.cpp
+		wqueue_start.cpp
+		wqueue_test.cpp
+	DEPENDS
+		px4_work_queue
 	)
-
-if ("${QURT_ENABLE_STUBS}" STREQUAL "1")
-	list(APPEND QURT_LAYER_SRCS
-		../stubs/stubs_posix.c
-		../stubs/stubs_qurt.c
-		)
-endif()
-
-add_library(px4_layer
-	${QURT_LAYER_SRCS}
-	${CONFIG_SRC}
-)
-target_link_libraries(px4_layer PRIVATE work_queue px4_work_queue)
-add_dependencies(px4_layer uorb_msgs) # dataman requires mission
